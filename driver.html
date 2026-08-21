@@ -1,0 +1,1471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <link rel="icon" href="data:,">
+  <title>Transformation Driver</title>
+  <style>
+    :root {
+      --black: #050505;
+      --ink: #11100f;
+      --metal: #e8e1d7;
+      --muted: #9a9188;
+      --accent: #e9006f;
+      --line: rgba(232, 225, 215, .26);
+      --ease: cubic-bezier(.16, 1, .3, 1);
+    }
+
+    * { box-sizing: border-box; }
+    html { background: var(--black); }
+    body {
+      min-width: 320px;
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--metal);
+      background: var(--black);
+      font-family: "Avenir Next", "Helvetica Neue", Arial, sans-serif;
+    }
+    button { font: inherit; }
+    button:focus-visible { outline: 1px solid var(--accent); outline-offset: 4px; }
+    [hidden] { display: none !important; }
+
+    .progress {
+      position: fixed;
+      inset: 0 auto auto 0;
+      z-index: 20;
+      width: 100%;
+      height: 2px;
+      background: rgba(232, 225, 215, .12);
+      pointer-events: none;
+      display: none;
+    }
+    .progress__fill {
+      display: block;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(0);
+      transform-origin: left center;
+      background: var(--accent);
+      transition: transform 240ms var(--ease);
+    }
+
+    .stage {
+      position: relative;
+      width: 100%;
+      min-height: 100svh;
+      height: 100svh;
+      overflow: hidden;
+      isolation: isolate;
+      background: var(--black);
+      touch-action: none;
+    }
+    .stage:not(.is-ready) { touch-action: pan-y; }
+    .stage.is-final { touch-action: pan-y; }
+
+    .frame-canvas {
+      position: absolute;
+      inset: 0;
+      z-index: 0;
+      display: block;
+      width: 100%;
+      height: 100%;
+      background: var(--black);
+    }
+    .motion-layer {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 280ms var(--ease), visibility 0s linear 280ms;
+    }
+    .motion-layer video {
+      display: block;
+      width: 100%;
+      height: 100%;
+      /* Keep the first opening shot at the same scale as the standby frame. */
+      object-fit: contain;
+      object-position: center;
+      background: var(--black);
+    }
+    .motion-hitbox {
+      position: absolute;
+      z-index: 5;
+      top: 50%;
+      left: 50%;
+      width: min(100%, calc(100svh * 1.75));
+      aspect-ratio: 1890 / 1080;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .motion-target {
+      position: absolute;
+      display: block;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      outline: 0;
+      background: transparent;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .motion-target:focus-visible { outline: 2px solid var(--metal); outline-offset: 6px; }
+    .motion-target--card {
+      top: 27%;
+      left: 18%;
+      width: 16%;
+      height: 50%;
+      border-radius: 7px;
+    }
+    /* Keep the click target generous. The visible cue stays confined to the
+       lower-left L, with a soft reflection beneath the hairline so it reads
+       as light caught by textured metal instead of a floating neon box. */
+    .motion-target--card::before,
+    .motion-target--card::after {
+      content: "";
+      position: absolute;
+      left: -2%;
+      bottom: -1%;
+      width: 46%;
+      height: 37%;
+      pointer-events: none;
+      border-bottom-left-radius: inherit;
+      animation: card-outline-presence 6400ms var(--ease) infinite;
+    }
+    .motion-target--card::before {
+      opacity: .5;
+      background:
+        radial-gradient(ellipse at 0 100%, rgba(233, 0, 111, .24) 0 8%, rgba(184, 23, 88, .13) 22%, transparent 62%),
+        linear-gradient(90deg, rgba(209, 31, 103, .23), rgba(184, 23, 88, .08) 34%, transparent 74%) left bottom / 18px 100% no-repeat,
+        linear-gradient(0deg, rgba(209, 31, 103, .2), rgba(184, 23, 88, .07) 38%, transparent 76%) left bottom / 100% 16px no-repeat;
+      filter: blur(5px);
+      mix-blend-mode: screen;
+    }
+    .motion-target--card::after {
+      opacity: .48;
+      border-left: 1px solid rgba(218, 63, 125, .48);
+      border-bottom: 1px solid rgba(218, 63, 125, .48);
+      box-shadow:
+        -2px 0 7px rgba(184, 23, 88, .2),
+        0 3px 10px rgba(184, 23, 88, .16),
+        inset 2px -2px 7px rgba(233, 0, 111, .08);
+    }
+    .motion-target--driver {
+      top: 18%;
+      left: 10%;
+      width: 80%;
+      height: 68%;
+    }
+    .motion-target--driver::before,
+    .motion-target--driver::after {
+      content: "";
+      position: absolute;
+      top: 16%;
+      width: 24%;
+      height: 70%;
+      pointer-events: none;
+      opacity: .72;
+      background: radial-gradient(ellipse at center, rgba(233, 0, 111, .31) 0%, rgba(233, 0, 111, .13) 42%, rgba(233, 0, 111, 0) 72%);
+      filter: blur(5px);
+      animation: rail-presence 1800ms var(--ease) infinite;
+    }
+    .motion-target--driver::before {
+      left: 4%;
+      clip-path: polygon(12% 5%, 69% 0%, 100% 37%, 76% 100%, 20% 88%, 0 45%);
+    }
+    .motion-target--driver::after {
+      right: 4%;
+      clip-path: polygon(31% 0, 88% 5%, 100% 45%, 80% 88%, 24% 100%, 0 37%);
+      animation-delay: 150ms;
+    }
+    @keyframes card-outline-presence {
+      0%, 100% { opacity: .42; }
+      50% { opacity: .7; }
+    }
+    @keyframes rail-presence {
+      0%, 100% { opacity: .45; transform: scale(.96); }
+      50% { opacity: .9; transform: scale(1.03); }
+    }
+    .stage.is-prelude-active .motion-layer {
+      visibility: visible;
+      opacity: 1;
+      transition-delay: 0s;
+    }
+    .stage.is-prelude-active .intro-layer { opacity: 0; }
+    /* The opening shot shares the cover composition, so cut between the two
+       layers without crossfading them and accidentally doubling brightness. */
+    .stage.is-opening-direct .motion-layer {
+      visibility: visible;
+      opacity: 1;
+      transition: none;
+    }
+    .stage.is-opening-direct .intro-layer {
+      opacity: 0;
+      transition: none;
+    }
+    .stage.is-intro-complete .motion-layer {
+      visibility: hidden;
+      opacity: 0;
+    }
+    .blackout {
+      position: absolute;
+      z-index: 4;
+      inset: 0;
+      opacity: 0;
+      pointer-events: none;
+      background: var(--black);
+      transition: opacity 280ms var(--ease);
+    }
+    .stage.is-card-transition .blackout { transition-duration: 650ms; }
+    .stage.is-transitioning .blackout { opacity: 1; }
+    .stage.is-card-flash .blackout {
+      background: #f0e7eb;
+      transition-duration: 110ms;
+    }
+    .stage.is-card-flash:not(.is-transitioning) .blackout {
+      transition-duration: 260ms;
+    }
+
+    .intro-layer {
+      position: absolute;
+      z-index: 1;
+      inset: 0;
+      overflow: hidden;
+      pointer-events: none;
+      opacity: 1;
+      visibility: visible;
+      transition: opacity 180ms var(--ease), visibility 0s linear 0s;
+    }
+    .intro-art {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: min(100%, calc(100svh * 1.75));
+      aspect-ratio: 1890 / 1080;
+      transform: translate(-50%, -50%);
+    }
+    .intro-driver,
+    .intro-slot-mask,
+    .intro-card {
+      position: absolute;
+      display: block;
+      user-select: none;
+      -webkit-user-drag: none;
+    }
+    .intro-driver,
+    .intro-slot-mask {
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    .intro-driver { z-index: 0; }
+    .intro-card {
+      z-index: 1;
+      top: -44%;
+      left: 49.5%;
+      width: 15%;
+      height: auto;
+      opacity: 0;
+      transform: translateX(-50%) rotate(-9deg) scale(.46);
+      transform-origin: 50% 86%;
+      will-change: top, left, transform, opacity, filter;
+    }
+    .intro-slot-mask {
+      z-index: 2;
+      clip-path: polygon(41.6% 36.9%, 58.4% 36.9%, 58.4% 100%, 41.6% 100%);
+    }
+    .stage.is-intro-playing .intro-card {
+      animation: card-insert 1180ms var(--ease) forwards;
+    }
+    .stage.is-intro-complete .intro-layer {
+      visibility: hidden;
+      opacity: 0;
+      transition-delay: 0s, 180ms;
+    }
+
+    @keyframes card-insert {
+      0% {
+        top: -44%;
+        left: 40.5%;
+        opacity: 0;
+        filter: blur(2px);
+        transform: translateX(-50%) rotate(-9deg) scale(.46);
+      }
+      16% {
+        left: 42.5%;
+        opacity: 1;
+      }
+      66% {
+        top: 19.2%;
+        left: 48.8%;
+        filter: blur(0);
+        transform: translateX(-50%) rotate(-1.5deg) scale(1.04);
+      }
+      84% {
+        top: 21.5%;
+        left: 49.5%;
+        transform: translateX(-50%) rotate(0) scale(1.01);
+      }
+      100% {
+        top: 21.5%;
+        left: 49.5%;
+        opacity: 1;
+        filter: blur(0);
+        transform: translateX(-50%) rotate(0) scale(1);
+      }
+    }
+
+    .hud {
+      position: absolute;
+      z-index: 2;
+      top: 0;
+      left: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      width: 100%;
+      padding: 20px clamp(18px, 3vw, 44px);
+      pointer-events: none;
+      display: none;
+    }
+    .hud__label,
+    .readout,
+    .instruction,
+    .sequence,
+    .loader,
+    .outro__eyebrow {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    }
+    .hud__label {
+      margin: 0;
+      font-size: 10px;
+      font-weight: 500;
+      line-height: 1.45;
+    }
+    .hud__label { color: var(--metal); }
+    .hud__label span {
+      display: block;
+      color: var(--muted);
+      font-size: 9px;
+    }
+    .readout {
+      position: absolute;
+      z-index: 2;
+      top: max(12vh, 86px);
+      left: 50%;
+      width: max-content;
+      max-width: calc(100vw - 36px);
+      transform: translateX(-50%);
+      color: rgba(232, 225, 215, .58);
+      font-size: 10px;
+      line-height: 1;
+      pointer-events: none;
+      display: none;
+    }
+    .readout b { color: var(--metal); font-weight: 500; }
+
+    .sequence {
+      position: absolute;
+      z-index: 2;
+      bottom: max(28px, 4.5vh);
+      left: 50%;
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      width: min(92vw, 600px);
+      margin: 0;
+      padding: 0;
+      transform: translateX(-50%);
+      list-style: none;
+      color: rgba(232, 225, 215, .36);
+      font-size: 9px;
+      line-height: 1.2;
+      pointer-events: none;
+      display: none;
+    }
+    .sequence__item { text-align: center; transition: color 240ms var(--ease); }
+    .sequence__item b { color: inherit; font-weight: 500; }
+    .sequence__item.is-active { color: var(--metal); }
+    .sequence__item.is-complete { color: rgba(232, 225, 215, .7); }
+
+    .activate {
+      position: absolute;
+      z-index: 3;
+      bottom: max(10vh, 82px);
+      left: 50%;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 11px 16px;
+      transform: translateX(-50%);
+      border: 1px solid var(--line);
+      border-radius: 0;
+      color: var(--metal);
+      background: rgba(5, 5, 5, .78);
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+      transition: color 180ms var(--ease), border-color 180ms var(--ease), background 180ms var(--ease);
+    }
+    .activate::before {
+      width: 6px;
+      height: 6px;
+      content: "";
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+    }
+    .activate:hover:not(:disabled) {
+      border-color: var(--accent);
+      color: #fff;
+      background: rgba(40, 7, 25, .82);
+    }
+    .activate:disabled { cursor: wait; opacity: .45; }
+
+    .mobile-controls {
+      position: absolute;
+      z-index: 3;
+      right: 18px;
+      bottom: 86px;
+      display: none;
+      gap: 8px;
+      display: none !important;
+    }
+    .mobile-control {
+      display: grid;
+      width: 40px;
+      height: 40px;
+      padding: 0;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      color: var(--metal);
+      background: rgba(5, 5, 5, .78);
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .mobile-control:disabled { cursor: default; opacity: .28; }
+
+    .loader {
+      position: absolute;
+      z-index: 5;
+      inset: 0;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      gap: 14px;
+      padding: 24px;
+      color: var(--metal);
+      background: var(--black);
+      font-size: 10px;
+      line-height: 1.5;
+      text-align: center;
+      transition: opacity 360ms var(--ease), visibility 360ms var(--ease);
+    }
+    .stage.is-ready .loader { visibility: hidden; opacity: 0; }
+    .loader__track {
+      width: min(240px, 62vw);
+      height: 1px;
+      background: rgba(232, 225, 215, .28);
+    }
+    .loader__track i {
+      display: block;
+      width: 100%;
+      height: 100%;
+      transform: scaleX(0);
+      transform-origin: left center;
+      background: var(--accent);
+      transition: transform 120ms var(--ease);
+    }
+    .loader__hint { color: var(--muted); font-size: 9px; }
+
+    .outro {
+      min-height: 100svh;
+      padding: 18vh clamp(24px, 8vw, 140px) 12vh;
+      display: grid;
+      align-content: end;
+      gap: 26px;
+      border-top: 1px solid rgba(232, 225, 215, .14);
+      background: var(--ink);
+    }
+    .outro__eyebrow { margin: 0; color: var(--accent); font-size: 10px; line-height: 1.3; }
+    .outro h1 {
+      max-width: 760px;
+      margin: 0;
+      color: var(--metal);
+      font-family: Impact, "Arial Narrow", sans-serif;
+      font-size: clamp(70px, 13vw, 190px);
+      font-weight: 900;
+      line-height: .84;
+    }
+    .replay {
+      justify-self: start;
+      padding: 11px 15px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      color: var(--metal);
+      background: transparent;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 10px;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .replay:hover { border-color: var(--accent); color: #fff; }
+
+    @media (max-width: 700px) {
+      .intro-art { width: 100%; }
+      .hud { padding: 17px 18px; }
+      .hud__label,
+      .hud__state { font-size: 9px; }
+      .hud__label span,
+      .hud__state span { font-size: 8px; }
+      .readout { top: max(16vh, 92px); font-size: 9px; }
+      .sequence { width: calc(100% - 32px); bottom: 28px; font-size: 8px; }
+      .activate { bottom: 94px; }
+      .mobile-controls { display: flex; }
+      .outro { padding: 17vh 24px 10vh; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="progress" aria-hidden="true"><i class="progress__fill" id="progressFill"></i></div>
+
+  <main>
+    <section class="stage" id="stage" aria-label="Interactive transformation sequence">
+      <canvas class="frame-canvas" id="frameCanvas" role="img" aria-label="Transformation driver frame sequence"></canvas>
+      <div class="motion-layer" aria-hidden="true"><video id="motionVideo" muted playsinline preload="auto"></video></div>
+      <audio id="kamenRideAudio" src="assets/09-kamen-ride-cue-correct.mp3" preload="auto" hidden></audio>
+      <audio id="standbyAudio" src="assets/01-decade-standby.mp3" preload="auto" loop hidden></audio>
+      <audio id="transformationAfterPushAudio" src="assets/10-transformation-after-push-no-kamen.mp3" preload="auto" hidden></audio>
+
+      <div class="intro-layer" id="introLayer" aria-hidden="true">
+        <div class="intro-art">
+          <video class="intro-driver" id="introDriver" src="assets/00-driver-open.mp4" muted playsinline preload="auto"></video>
+        </div>
+      </div>
+      <div class="motion-hitbox" aria-label="Interactive transformation controls">
+        <button class="motion-target motion-target--card" id="cardTarget" type="button" aria-label="Select the transformation card" hidden></button>
+        <button class="motion-target motion-target--driver" id="driverTarget" type="button" aria-label="Push the transformation driver" hidden></button>
+      </div>
+      <div class="blackout" aria-hidden="true"></div>
+
+      <div class="readout" aria-live="polite">
+        <span id="stationReadout">00 <b>DRIVER STANDBY</b></span>
+      </div>
+
+      <button class="activate" id="activate" type="button">ACTIVATE DRIVER</button>
+
+      <div class="mobile-controls" id="mobileControls" aria-label="Sequence controls" hidden>
+        <button class="mobile-control" id="previous" type="button" aria-label="Previous station" title="Previous station">&uarr;</button>
+        <button class="mobile-control" id="next" type="button" aria-label="Next station" title="Next station">&darr;</button>
+      </div>
+
+      <ol class="sequence" id="sequence" aria-label="Sequence stations"></ol>
+
+      <div class="loader" id="loader" aria-live="polite">
+        <span id="loadingText">LOADING LOCAL MEDIA</span>
+        <span class="loader__track" aria-hidden="true"><i id="loadingFill"></i></span>
+        <span class="loader__hint" id="loadingHint">LOCAL MEDIA CHECK</span>
+      </div>
+    </section>
+
+    <section class="outro" aria-label="Sequence complete">
+      <button class="replay" id="replay" type="button">REPLAY SEQUENCE</button>
+    </section>
+  </main>
+
+  <script>
+    const CONFIG = {
+      totalFrames: 124,
+      wheelIdleMs: 350,
+      transitionMs: 280,
+      cardTransitionMs: 650,
+      cardFlashInMs: 110,
+      cardFlashOutMs: 260,
+      // Each tap advances a complete story beat; source-video soundtracks are removed.
+      prelude: [
+        {
+          id: 'driver',
+          label: 'DRIVER OPEN',
+          source: 'assets/00-driver-open.mp4',
+          rotationSfxDelayMs: 500
+        },
+        {
+          id: 'case-ready',
+          label: 'CARD CASE',
+          source: 'assets/01-card-case-side.mp4'
+        },
+        {
+          id: 'card-eject',
+          label: 'CARD DRAW',
+          source: 'assets/02-card-eject.mp4',
+          cardDrawDelayMs: 1050
+        },
+        {
+          id: 'transform',
+          label: 'CARD ORBIT + INSERT',
+          source: 'assets/02-card-orbit-fast.mp4',
+          // This user-edited source already contains the intended acceleration.
+          playbackRate: 1
+        },
+        {
+          id: 'driver-close',
+          label: 'KAMEN RIDE',
+          source: 'assets/04-driver-close.mp4'
+        }
+      ],
+      // The close video ends on the held transformation frame.
+      stations: [
+        { id: 'ride', label: 'KAMEN RIDE', frame: 123, duration: 0 }
+      ]
+    };
+
+    const stage = document.querySelector('#stage');
+    const canvas = document.querySelector('#frameCanvas');
+    const ctx = canvas.getContext('2d');
+    const motionVideo = document.querySelector('#motionVideo');
+    const introDriver = document.querySelector('#introDriver');
+    const cardTarget = document.querySelector('#cardTarget');
+    const driverTarget = document.querySelector('#driverTarget');
+    const activate = document.querySelector('#activate');
+    const previous = document.querySelector('#previous');
+    const next = document.querySelector('#next');
+    const mobileControls = document.querySelector('#mobileControls');
+    const replay = document.querySelector('#replay');
+    const progressFill = document.querySelector('#progressFill');
+    const stationReadout = document.querySelector('#stationReadout');
+    const sequence = document.querySelector('#sequence');
+    const loadingText = document.querySelector('#loadingText');
+    const loadingFill = document.querySelector('#loadingFill');
+    const loadingHint = document.querySelector('#loadingHint');
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const narrowViewport = window.matchMedia('(max-width: 700px)');
+
+    const themeAudio = new Audio('assets/02-decade-transformation-theme.mp3');
+    const cardDrawAudio = new Audio('assets/04-card-draw-sfx.mp3');
+    const driverSlideAudio = new Audio('assets/05-driver-slide-sfx.mp3');
+    const kamenRideAudio = document.querySelector('#kamenRideAudio');
+    const standbyAudio = document.querySelector('#standbyAudio');
+    const transformationAfterPushAudio = document.querySelector('#transformationAfterPushAudio');
+    themeAudio.loop = true;
+    themeAudio.volume = .32;
+    cardDrawAudio.volume = .78;
+    driverSlideAudio.volume = .74;
+    kamenRideAudio.volume = .86;
+    standbyAudio.volume = .62;
+    transformationAfterPushAudio.volume = .86;
+
+    const frames = [];
+    const sequenceItems = [];
+    let canvasWidth = 0;
+    let canvasHeight = 0;
+    let canvasDpr = 0;
+    let currentFrame = CONFIG.stations[0].frame;
+    let stationIndex = 0;
+    let mediaReady = false;
+    let introComplete = false;
+    let preludeReady = false;
+    let preludeIndex = 0;
+    let playing = false;
+    let wheelLocked = false;
+    let wheelTimer = 0;
+    let transitionToken = 0;
+    let touchStartY = null;
+    let touchCaptured = false;
+    let suppressStageClickUntil = 0;
+    let correctingScroll = false;
+    let introTimer = 0;
+    let timedSfxTimer = 0;
+    let interactionGate = null;
+
+    const lastStationIndex = CONFIG.stations.length - 1;
+    const flowSteps = [...CONFIG.prelude, ...CONFIG.stations];
+    const framePath = (index) => `frames-final/frame_${String(index + 1).padStart(4, '0')}.webp`;
+
+    function buildSequence() {
+      flowSteps.forEach((station, index) => {
+        const item = document.createElement('li');
+        item.className = 'sequence__item';
+        item.innerHTML = `<b>${String(index + 1).padStart(2, '0')}</b> ${station.label.replace('DRIVER ', '')}`;
+        sequence.append(item);
+        sequenceItems.push(item);
+      });
+    }
+
+    function syncCanvasSize() {
+      const width = Math.max(1, Math.round(canvas.clientWidth || window.innerWidth));
+      const height = Math.max(1, Math.round(canvas.clientHeight || window.innerHeight));
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if (width === canvasWidth && height === canvasHeight && dpr === canvasDpr) return { width, height };
+
+      canvasWidth = width;
+      canvasHeight = height;
+      canvasDpr = dpr;
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      return { width, height };
+    }
+
+    function drawFrame(index) {
+      const frameIndex = Math.max(0, Math.min(CONFIG.totalFrames - 1, Math.round(index)));
+      const image = frames[frameIndex];
+      if (!image || !image.complete || !image.naturalWidth) return;
+
+      const { width, height } = syncCanvasSize();
+      const scale = narrowViewport.matches
+        ? Math.min(width / image.naturalWidth, height / image.naturalHeight)
+        : Math.max(width / image.naturalWidth, height / image.naturalHeight);
+      const drawWidth = image.naturalWidth * scale;
+      const drawHeight = image.naturalHeight * scale;
+
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+    }
+
+    function easeInOut(progress) {
+      const easedOut = 1 - Math.pow(1 - progress, 3);
+      const easedStrong = progress < .5
+        ? 2 * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 2) / 2;
+      return easedOut * .55 + easedStrong * .30 + progress * .15;
+    }
+
+    function playAudio(audio, { restart = false } = {}) {
+      if (restart) audio.currentTime = 0;
+      if (!audio.paused && !restart) return Promise.resolve(true);
+      return audio.play().then(() => true).catch(() => false);
+    }
+
+    function stopAudio(audio, { reset = true } = {}) {
+      audio.pause();
+      if (reset) audio.currentTime = 0;
+    }
+
+    function startDriverAudio() {
+      playAudio(themeAudio, { restart: themeAudio.paused });
+    }
+
+    function triggerTransformationAudio() {
+      playAudio(themeAudio);
+    }
+
+    function stopAllAudio() {
+      window.clearTimeout(timedSfxTimer);
+      stopAudio(themeAudio);
+      stopAudio(cardDrawAudio);
+      stopAudio(driverSlideAudio);
+      stopAudio(kamenRideAudio);
+      stopAudio(standbyAudio);
+      stopAudio(transformationAfterPushAudio);
+    }
+
+    function waitForAudioEnd(audio, token) {
+      return new Promise((resolve) => {
+        function tick() {
+          if (token !== transitionToken) {
+            resolve(false);
+            return;
+          }
+          if (audio.ended) {
+            resolve(true);
+            return;
+          }
+          requestAnimationFrame(tick);
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+
+    function triggerStepEffects(step) {
+      window.clearTimeout(timedSfxTimer);
+      if (step.id === 'card-eject') {
+        timedSfxTimer = window.setTimeout(() => {
+          playAudio(cardDrawAudio, { restart: true });
+        }, step.cardDrawDelayMs ?? 0);
+        return;
+      }
+
+      if (step.id === 'driver-close') {
+        triggerTransformationAudio();
+        return;
+      }
+
+      if (step.id === 'driver') {
+        timedSfxTimer = window.setTimeout(() => {
+          playAudio(driverSlideAudio, { restart: true });
+        }, step.rotationSfxDelayMs ?? 0);
+      }
+    }
+
+    function animateFrames(from, to, duration, token) {
+      if (duration === 0) {
+        currentFrame = to;
+        drawFrame(to);
+        return Promise.resolve(token === transitionToken);
+      }
+
+      const startedAt = performance.now();
+      return new Promise((resolve) => {
+        function tick(now) {
+          if (token !== transitionToken) {
+            resolve(false);
+            return;
+          }
+          const progress = Math.min(1, (now - startedAt) / duration);
+          currentFrame = from + (to - from) * easeInOut(progress);
+          drawFrame(currentFrame);
+          if (progress < 1) requestAnimationFrame(tick);
+          else resolve(true);
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+
+    function updateControls() {
+      const canBegin = mediaReady && preludeReady;
+      activate.hidden = !canBegin || introComplete || interactionGate !== null;
+      activate.disabled = !canBegin || playing;
+      mobileControls.hidden = !canBegin || !introComplete;
+      previous.disabled = !canBegin || playing;
+      next.disabled = !canBegin || playing || stationIndex === lastStationIndex;
+    }
+
+    function updateStationUI() {
+      const station = CONFIG.stations[stationIndex];
+      stage.dataset.station = introComplete ? station.id : 'ready';
+      stage.classList.toggle('is-final', introComplete && stationIndex === lastStationIndex);
+      stage.classList.toggle('is-playing', playing);
+
+      const activeIndex = introComplete ? CONFIG.prelude.length + stationIndex : preludeIndex;
+      const progress = activeIndex / (flowSteps.length - 1);
+      const number = String(activeIndex + 1).padStart(2, '0');
+      const label = introComplete ? station.label : preludeIndex === 0 ? 'DRIVER READY' : CONFIG.prelude[preludeIndex - 1].label;
+      stationReadout.innerHTML = `${number} <b>${label}</b>`;
+      progressFill.style.transform = `scaleX(${progress})`;
+
+      sequenceItems.forEach((item, index) => {
+        item.classList.toggle('is-active', index === activeIndex);
+        item.classList.toggle('is-complete', index < activeIndex);
+      });
+      updateControls();
+    }
+
+    function canMove(direction) {
+      const target = stationIndex + direction;
+      return target >= 0 && target <= lastStationIndex;
+    }
+
+    function setPlaying(nextPlaying) {
+      playing = nextPlaying;
+      stage.classList.toggle('is-playing', playing);
+      updateControls();
+    }
+
+    async function moveOneStation(direction) {
+      if (!mediaReady || playing || !canMove(direction)) return false;
+
+      const fromStation = CONFIG.stations[stationIndex];
+      const targetIndex = stationIndex + direction;
+      const targetStation = CONFIG.stations[targetIndex];
+      const duration = reducedMotion.matches
+        ? 0
+        : direction > 0
+          ? targetStation.duration
+          : fromStation.duration;
+      const token = ++transitionToken;
+
+      setPlaying(true);
+      const completed = await animateFrames(currentFrame, targetStation.frame, duration, token);
+      if (!completed || token !== transitionToken) return false;
+
+      currentFrame = targetStation.frame;
+      stationIndex = targetIndex;
+      drawFrame(currentFrame);
+      setPlaying(false);
+      updateStationUI();
+      return true;
+    }
+
+    function completeCardInsert() {
+      introComplete = true;
+      clearInteractionGates();
+      stage.classList.remove('is-intro-playing', 'is-prelude-active', 'is-opening-direct');
+      stage.classList.add('is-intro-complete');
+      currentFrame = CONFIG.stations[0].frame;
+      stationIndex = 0;
+      drawFrame(currentFrame);
+      setPlaying(false);
+      updateStationUI();
+    }
+
+    function loadVideo(source) {
+      return new Promise((resolve) => {
+        const ready = () => resolve(true);
+        const failed = () => resolve(false);
+        motionVideo.addEventListener('loadeddata', ready, { once: true });
+        motionVideo.addEventListener('error', failed, { once: true });
+        motionVideo.src = source;
+        motionVideo.load();
+      });
+    }
+
+    function playLoadedVideo({
+      onPlayRequested,
+      onPlaybackStarted,
+      videoDelayMs = 0,
+      playbackRate = 1
+    } = {}) {
+      return new Promise((resolve) => {
+        let resolved = false;
+        const finish = (result) => {
+          if (resolved) return;
+          resolved = true;
+          resolve(result);
+        };
+        motionVideo.addEventListener('ended', () => finish(true), { once: true });
+        motionVideo.addEventListener('error', () => finish(false), { once: true });
+        void onPlayRequested?.();
+        const startVideo = () => {
+          motionVideo.playbackRate = reducedMotion.matches ? 1 : playbackRate;
+          motionVideo.play()
+            .then(() => onPlaybackStarted?.())
+            .catch(() => finish(false));
+        };
+        if (videoDelayMs > 0) window.setTimeout(startVideo, videoDelayMs);
+        else void startVideo();
+      });
+    }
+
+    function clearInteractionGates() {
+      interactionGate = null;
+      cardTarget.hidden = true;
+      driverTarget.hidden = true;
+    }
+
+    function armCardGate() {
+      interactionGate = 'card';
+      cardTarget.hidden = false;
+      updateControls();
+    }
+
+    async function prepareDriverGate({ transitionMs = CONFIG.transitionMs, useBlackout = true } = {}) {
+      if (playing) return false;
+      const token = ++transitionToken;
+      const transformStep = CONFIG.prelude[preludeIndex];
+      setPlaying(true);
+      if (useBlackout) {
+        stage.classList.toggle('is-card-transition', transitionMs === CONFIG.cardTransitionMs);
+        stage.classList.add('is-transitioning');
+        await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : transitionMs));
+      }
+      if (token !== transitionToken || !transformStep || !(await loadVideo(transformStep.source))) {
+        stage.classList.remove('is-transitioning', 'is-card-transition');
+        setPlaying(false);
+        return false;
+      }
+
+      stage.classList.add('is-prelude-active');
+      motionVideo.currentTime = 0;
+      motionVideo.pause();
+      interactionGate = 'driver';
+      driverTarget.hidden = false;
+      stage.classList.remove('is-transitioning', 'is-card-transition');
+      setPlaying(false);
+      updateControls();
+      return true;
+    }
+
+    async function selectCard() {
+      if (interactionGate !== 'card' || playing) return false;
+      const token = ++transitionToken;
+      const step = CONFIG.prelude[preludeIndex];
+      if (!step || step.id !== 'card-eject') return false;
+
+      cardTarget.hidden = true;
+      interactionGate = null;
+      setPlaying(true);
+      stage.classList.add('is-card-flash', 'is-transitioning');
+      await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.cardFlashInMs));
+      if (token !== transitionToken || !(await loadVideo(step.source))) {
+        stage.classList.remove('is-transitioning', 'is-card-flash');
+        setPlaying(false);
+        return false;
+      }
+
+      stage.classList.add('is-prelude-active');
+      motionVideo.currentTime = 0;
+      triggerStepEffects(step);
+      const playback = playLoadedVideo({
+        playbackRate: step.playbackRate
+      });
+      stage.classList.remove('is-transitioning');
+      await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.cardFlashOutMs));
+      stage.classList.remove('is-card-flash');
+      const finished = await playback;
+      if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+
+      preludeIndex += 1;
+      return playAutomaticTransformation(token);
+    }
+
+    async function playAutomaticTransformation(token) {
+      const step = CONFIG.prelude[preludeIndex];
+      if (!step || step.id !== 'transform') {
+        setPlaying(false);
+        return false;
+      }
+
+      clearInteractionGates();
+      if (token !== transitionToken || !(await loadVideo(step.source))) {
+        setPlaying(false);
+        return false;
+      }
+
+      motionVideo.currentTime = 0;
+      triggerStepEffects(step);
+      const playback = playLoadedVideo({
+        playbackRate: step.playbackRate
+      });
+
+      const finished = await playback;
+      if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+
+      preludeIndex += 1;
+      return playFinalTransformation(token);
+    }
+
+    async function playFinalTransformation(token) {
+      const step = CONFIG.prelude[preludeIndex];
+      if (!step || step.id !== 'driver-close') {
+        setPlaying(false);
+        return false;
+      }
+
+      if (token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+
+      // Switch the visual source and start “KAMEN RIDE” in the same task, but
+      // keep them independent: the audio never waits for video loading or
+      // playback, and the final video remains paused on its first frame.
+      const finalFrameReady = loadVideo(step.source);
+      const cueStart = playAudio(kamenRideAudio, { restart: true });
+      const [frameReady, cueStarted] = await Promise.all([finalFrameReady, cueStart]);
+      if (!frameReady || !cueStarted || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+      motionVideo.currentTime = 0;
+      motionVideo.pause();
+      if (!(await waitForAudioEnd(kamenRideAudio, token))) {
+        setPlaying(false);
+        return false;
+      }
+
+      // Keep the standby sound looping for the whole waiting state. It stops
+      // only when the user performs the final push action.
+      await playAudio(standbyAudio, { restart: true });
+
+      interactionGate = 'driver';
+      driverTarget.hidden = false;
+      setPlaying(false);
+      updateControls();
+      return true;
+    }
+
+    async function playPreparedTransformation() {
+      if (interactionGate !== 'driver' || playing) return false;
+      const token = ++transitionToken;
+      const step = CONFIG.prelude[preludeIndex];
+      if (!step || step.id !== 'driver-close') return false;
+
+      clearInteractionGates();
+      setPlaying(true);
+      motionVideo.currentTime = 0;
+      stopAudio(standbyAudio);
+      triggerStepEffects(step);
+      const transformationStarted = await playAudio(transformationAfterPushAudio, { restart: true });
+      if (!transformationStarted) {
+        setPlaying(false);
+        return false;
+      }
+      const finished = await playLoadedVideo();
+      if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+
+      preludeIndex += 1;
+      completeCardInsert();
+      return true;
+    }
+
+    function playVideoReverse(token) {
+      if (reducedMotion.matches) {
+        motionVideo.currentTime = 0;
+        return Promise.resolve(token === transitionToken);
+      }
+      return new Promise((resolve) => {
+        motionVideo.pause();
+        let lastTime = performance.now();
+        function tick(now) {
+          if (token !== transitionToken) {
+            resolve(false);
+            return;
+          }
+          const elapsed = (now - lastTime) / 1000;
+          lastTime = now;
+          motionVideo.currentTime = Math.max(0, motionVideo.currentTime - elapsed);
+          if (motionVideo.currentTime > .015) requestAnimationFrame(tick);
+          else {
+            motionVideo.currentTime = 0;
+            resolve(true);
+          }
+        }
+        requestAnimationFrame(tick);
+      });
+    }
+
+    async function playPreludeStep() {
+      if (!mediaReady || !preludeReady || introComplete || playing || interactionGate !== null) return false;
+      const token = ++transitionToken;
+      const step = CONFIG.prelude[preludeIndex];
+      if (!step) return false;
+
+      // Start the BGM inside the initiating user gesture, before any media load.
+      if (step.id === 'driver') playAudio(themeAudio, { restart: true });
+      setPlaying(true);
+      const useBlackout = step.id !== 'driver';
+      if (useBlackout) {
+        stage.classList.add('is-transitioning');
+        await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.transitionMs));
+      }
+      if (token !== transitionToken || !(await loadVideo(step.source))) {
+        stage.classList.remove('is-transitioning', 'is-opening-direct');
+        setPlaying(false);
+        return false;
+      }
+
+      motionVideo.currentTime = 0;
+      if (step.id === 'driver') stage.classList.add('is-opening-direct');
+      stage.classList.add('is-prelude-active');
+      stage.classList.remove('is-transitioning');
+      triggerStepEffects(step);
+      const finished = await playLoadedVideo();
+      if (!finished || token !== transitionToken) {
+        stage.classList.remove('is-opening-direct');
+        setPlaying(false);
+        return false;
+      }
+
+      if (step.id === 'driver') stage.classList.remove('is-opening-direct');
+      if (step.id === 'driver') startDriverAudio();
+      preludeIndex += 1;
+      if (step.id === 'case-ready') {
+        setPlaying(false);
+        armCardGate();
+        return true;
+      }
+      if (preludeIndex === CONFIG.prelude.length) {
+        stage.classList.add('is-transitioning');
+        await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.transitionMs));
+        completeCardInsert();
+        stage.classList.remove('is-transitioning');
+      } else {
+        updateStationUI();
+        setPlaying(false);
+      }
+      return true;
+    }
+
+    async function reversePreludeStep() {
+      if (!mediaReady || !preludeReady || playing || preludeIndex === 0) return false;
+      const token = ++transitionToken;
+      setPlaying(true);
+      const finished = await playVideoReverse(token);
+      if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+      preludeIndex -= 1;
+      if (preludeIndex === 0) {
+        stopAllAudio();
+        stage.classList.add('is-transitioning');
+        await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.transitionMs));
+        stage.classList.remove('is-prelude-active');
+        stage.classList.remove('is-transitioning');
+      }
+      updateStationUI();
+      setPlaying(false);
+      return true;
+    }
+
+    async function reverseFromFinalFrames() {
+      if (!introComplete || stationIndex !== 0 || playing) return false;
+      const token = ++transitionToken;
+      const lastPreludeIndex = CONFIG.prelude.length - 1;
+      const lastPrelude = CONFIG.prelude[lastPreludeIndex];
+      setPlaying(true);
+      startDriverAudio();
+      stage.classList.add('is-transitioning');
+      await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.transitionMs));
+      if (token !== transitionToken || !(await loadVideo(lastPrelude.source))) {
+        stage.classList.remove('is-transitioning');
+        setPlaying(false);
+        return false;
+      }
+      introComplete = false;
+      preludeIndex = CONFIG.prelude.length;
+      stage.classList.remove('is-intro-complete');
+      stage.classList.add('is-prelude-active');
+      motionVideo.currentTime = Number.isFinite(motionVideo.duration) ? motionVideo.duration : 0;
+      stage.classList.remove('is-transitioning');
+      const finished = await playVideoReverse(token);
+      if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+      preludeIndex = lastPreludeIndex;
+      updateStationUI();
+      setPlaying(false);
+      return true;
+    }
+
+    function advanceSequence() {
+      return introComplete ? moveOneStation(1) : playPreludeStep();
+    }
+
+    function armWheelRelease() {
+      window.clearTimeout(wheelTimer);
+      wheelTimer = window.setTimeout(() => {
+        if (playing) {
+          armWheelRelease();
+          return;
+        }
+        wheelLocked = false;
+      }, CONFIG.wheelIdleMs);
+    }
+
+    function handleWheelIntent(direction) {
+      const canReversePrelude = direction < 0 && (!introComplete ? preludeIndex > 0 : stationIndex === 0);
+      if (!canMove(direction) && !canReversePrelude) return;
+      if (wheelLocked || playing) {
+        armWheelRelease();
+        return;
+      }
+      wheelLocked = true;
+      const action = introComplete
+        ? stationIndex === 0 && direction < 0 ? reverseFromFinalFrames() : moveOneStation(direction)
+        : direction > 0 ? playPreludeStep() : reversePreludeStep();
+      void action.finally(armWheelRelease);
+    }
+
+    function resetSequence() {
+      transitionToken += 1;
+      wheelLocked = false;
+      window.clearTimeout(wheelTimer);
+      window.clearTimeout(introTimer);
+      clearInteractionGates();
+      introComplete = false;
+      preludeIndex = 0;
+      motionVideo.pause();
+      motionVideo.removeAttribute('src');
+      stage.classList.remove('is-intro-playing', 'is-intro-complete', 'is-prelude-active', 'is-transitioning', 'is-opening-direct', 'is-card-flash', 'is-card-transition');
+      stopAllAudio();
+      currentFrame = CONFIG.stations[0].frame;
+      stationIndex = 0;
+      setPlaying(false);
+      drawFrame(currentFrame);
+      updateStationUI();
+      window.scrollTo({ top: 0, behavior: reducedMotion.matches ? 'auto' : 'smooth' });
+    }
+
+    function isTopOfSequence() {
+      return window.scrollY <= 2;
+    }
+
+    function shouldCaptureDirection(direction) {
+      if (!mediaReady || !preludeReady || !isTopOfSequence() || interactionGate !== null) return false;
+      if (!introComplete) return direction > 0 || preludeIndex > 0;
+      if (stationIndex < lastStationIndex) return true;
+      return direction < 0;
+    }
+
+    function isInteractiveElement(target) {
+      return target instanceof Element && Boolean(target.closest('button'));
+    }
+
+    activate.addEventListener('click', () => { void advanceSequence(); });
+    cardTarget.addEventListener('click', () => { void selectCard(); });
+    driverTarget.addEventListener('click', () => { void playPreparedTransformation(); });
+    previous.addEventListener('click', () => {
+      void (stationIndex === 0 ? reverseFromFinalFrames() : moveOneStation(-1));
+    });
+    next.addEventListener('click', () => { void moveOneStation(1); });
+    replay.addEventListener('click', resetSequence);
+
+    stage.addEventListener('click', (event) => {
+      if (isInteractiveElement(event.target) || performance.now() < suppressStageClickUntil) return;
+      if (mediaReady && preludeReady && !playing && (!introComplete || stationIndex < lastStationIndex)) void advanceSequence();
+    });
+
+    window.addEventListener('wheel', (event) => {
+      const direction = Math.sign(event.deltaY);
+      if (!direction || !shouldCaptureDirection(direction)) return;
+      event.preventDefault();
+      handleWheelIntent(direction);
+    }, { passive: false });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.repeat || isInteractiveElement(event.target) || !mediaReady || !isTopOfSequence()) return;
+      const forward = ['ArrowDown', 'PageDown', ' ', 'Enter'].includes(event.key);
+      const backward = ['ArrowUp', 'PageUp'].includes(event.key);
+      if (!forward && !backward) return;
+
+      const direction = forward ? 1 : -1;
+      if (!shouldCaptureDirection(direction)) return;
+      event.preventDefault();
+      void (introComplete
+        ? stationIndex === 0 && direction < 0 ? reverseFromFinalFrames() : moveOneStation(direction)
+        : direction > 0 ? playPreludeStep() : reversePreludeStep());
+    });
+
+    window.addEventListener('scroll', () => {
+      if (!mediaReady || stationIndex === lastStationIndex || correctingScroll || window.scrollY <= 0) return;
+      correctingScroll = true;
+      window.scrollTo(0, 0);
+      requestAnimationFrame(() => { correctingScroll = false; });
+    }, { passive: true });
+
+    stage.addEventListener('touchstart', (event) => {
+      if (event.touches.length !== 1 || !isTopOfSequence()) return;
+      touchStartY = event.touches[0].clientY;
+      touchCaptured = false;
+    }, { passive: true });
+
+    stage.addEventListener('touchmove', (event) => {
+      if (touchStartY === null || event.touches.length !== 1) return;
+      const direction = Math.sign(touchStartY - event.touches[0].clientY);
+      if (direction && shouldCaptureDirection(direction)) {
+        touchCaptured = true;
+        event.preventDefault();
+      }
+    }, { passive: false });
+
+    stage.addEventListener('touchend', (event) => {
+      if (touchStartY === null) return;
+      const endY = event.changedTouches[0]?.clientY ?? touchStartY;
+      const delta = touchStartY - endY;
+      if (touchCaptured && Math.abs(delta) >= 52) {
+        suppressStageClickUntil = performance.now() + 450;
+        const direction = delta > 0 ? 1 : -1;
+        void (introComplete
+          ? stationIndex === 0 && direction < 0 ? reverseFromFinalFrames() : moveOneStation(direction)
+          : direction > 0 ? playPreludeStep() : reversePreludeStep());
+      }
+      touchStartY = null;
+      touchCaptured = false;
+    }, { passive: true });
+
+    window.addEventListener('resize', () => drawFrame(currentFrame));
+    narrowViewport.addEventListener('change', () => drawFrame(currentFrame));
+
+    function waitForVisualMedia(media) {
+      if (media instanceof HTMLVideoElement) {
+        if (media.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && media.videoWidth) {
+          media.currentTime = 0;
+          media.pause();
+          return Promise.resolve(true);
+        }
+        return new Promise((resolve) => {
+          media.addEventListener('loadeddata', () => {
+            media.currentTime = 0;
+            media.pause();
+            resolve(Boolean(media.videoWidth));
+          }, { once: true });
+          media.addEventListener('error', () => resolve(false), { once: true });
+        });
+      }
+      if (media.complete) return Promise.resolve(Boolean(media.naturalWidth));
+      return new Promise((resolve) => {
+        media.addEventListener('load', () => resolve(true), { once: true });
+        media.addEventListener('error', () => resolve(false), { once: true });
+      });
+    }
+
+    function probeVideo(source) {
+      return new Promise((resolve) => {
+        const probe = document.createElement('video');
+        const finish = (ready) => {
+          probe.removeAttribute('src');
+          probe.load();
+          resolve(ready);
+        };
+        probe.preload = 'metadata';
+        probe.muted = true;
+        probe.addEventListener('loadeddata', () => finish(true), { once: true });
+        probe.addEventListener('error', () => finish(false), { once: true });
+        probe.src = source;
+      });
+    }
+
+    async function preloadFrames() {
+      let loaded = 0;
+      const requiredFrames = [CONFIG.stations[0].frame];
+      const jobs = requiredFrames.map((index) => new Promise((resolve) => {
+        const image = new Image();
+        image.decoding = 'async';
+        image.onload = () => {
+          loaded += 1;
+          loadingText.textContent = `LOADING FINAL FRAME ${loaded}/${requiredFrames.length}`;
+          loadingFill.style.transform = `scaleX(${loaded / requiredFrames.length})`;
+          resolve(true);
+        };
+        image.onerror = () => resolve(false);
+        image.src = framePath(index);
+        frames[index] = image;
+      }));
+
+      const [results, introAssets, preludeSources] = await Promise.all([
+        Promise.all(jobs),
+        Promise.all([waitForVisualMedia(introDriver)]),
+        Promise.all(CONFIG.prelude.map((step) => probeVideo(step.source)))
+      ]);
+      mediaReady = results.every(Boolean) && introAssets.every(Boolean);
+      preludeReady = preludeSources.every(Boolean);
+      if (!mediaReady) {
+        loadingText.textContent = 'SEQUENCE MEDIA UNAVAILABLE';
+        loadingHint.textContent = 'KEEP index.html, frames-final/, AND assets/ TOGETHER';
+        return;
+      }
+
+      stage.classList.add('is-ready');
+      loadingHint.textContent = preludeReady ? 'SOURCE FRAMES + PRELUDE READY' : 'PRELUDE MEDIA PENDING';
+      drawFrame(currentFrame);
+      updateStationUI();
+    }
+
+    buildSequence();
+    updateStationUI();
+    preloadFrames();
+  </script>
+</body>
+</html>
