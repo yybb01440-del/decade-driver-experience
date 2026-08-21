@@ -91,7 +91,10 @@
       object-fit: contain;
       object-position: center;
       background: var(--black);
+      opacity: 1;
+      transition: opacity 140ms var(--ease);
     }
+    .stage.is-video-loading .motion-layer video { opacity: 0; }
     .motion-hitbox {
       position: absolute;
       z-index: 5;
@@ -757,9 +760,9 @@
       if (!image || !image.complete || !image.naturalWidth) return;
 
       const { width, height } = syncCanvasSize();
-      const scale = narrowViewport.matches
-        ? Math.min(width / image.naturalWidth, height / image.naturalHeight)
-        : Math.max(width / image.naturalWidth, height / image.naturalHeight);
+      // Match the video's object-fit: contain at every size so the final
+      // still never jumps closer than the closing video.
+      const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
       const drawWidth = image.naturalWidth * scale;
       const drawHeight = image.naturalHeight * scale;
 
@@ -944,10 +947,30 @@
       updateStationUI();
     }
 
+    function freezeCurrentVideoFrame() {
+      if (motionVideo.readyState < HTMLMediaElement.HAVE_CURRENT_DATA || !motionVideo.videoWidth) return false;
+      const { width, height } = syncCanvasSize();
+      const scale = Math.min(width / motionVideo.videoWidth, height / motionVideo.videoHeight);
+      const drawWidth = motionVideo.videoWidth * scale;
+      const drawHeight = motionVideo.videoHeight * scale;
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(motionVideo, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+      return true;
+    }
+
     function loadVideo(source) {
       return new Promise((resolve) => {
-        const ready = () => resolve(true);
-        const failed = () => resolve(false);
+        freezeCurrentVideoFrame();
+        stage.classList.add('is-video-loading');
+        const ready = () => {
+          stage.classList.remove('is-video-loading');
+          resolve(true);
+        };
+        const failed = () => {
+          stage.classList.remove('is-video-loading');
+          resolve(false);
+        };
         motionVideo.addEventListener('loadeddata', ready, { once: true });
         motionVideo.addEventListener('error', failed, { once: true });
         motionVideo.src = source;
