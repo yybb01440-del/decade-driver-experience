@@ -623,6 +623,7 @@
       cardTransitionMs: 650,
       cardFlashInMs: 110,
       cardFlashOutMs: 260,
+      finalVideoHoldMs: 620,
       // Each tap advances a complete story beat; source-video soundtracks are removed.
       prelude: [
         {
@@ -868,7 +869,7 @@
 
     function updateControls() {
       const canBegin = mediaReady && preludeReady;
-      activate.hidden = !canBegin || introComplete || interactionGate !== null;
+      activate.hidden = !canBegin || introComplete || interactionGate !== null || playing;
       activate.disabled = !canBegin || playing;
       mobileControls.hidden = !canBegin || !introComplete;
       previous.disabled = !canBegin || playing;
@@ -1143,6 +1144,14 @@
       }
       const finished = await playLoadedVideo();
       if (!finished || token !== transitionToken) {
+        setPlaying(false);
+        return false;
+      }
+
+      // Let the one-second closing clip settle on its own end frame before
+      // handing the screen back to the final still.
+      await new Promise((resolve) => window.setTimeout(resolve, reducedMotion.matches ? 0 : CONFIG.finalVideoHoldMs));
+      if (token !== transitionToken) {
         setPlaying(false);
         return false;
       }
