@@ -121,38 +121,64 @@
       height: 50%;
       border-radius: 7px;
     }
-    /* Keep the click target generous. The visible cue stays confined to the
-       lower-left L, with a soft reflection beneath the hairline so it reads
-       as light caught by textured metal instead of a floating neon box. */
+    /* Keep the click target generous. The cue is still only a lower-left L:
+       an illuminated machine edge, not a floating neon box. */
     .motion-target--card::before,
     .motion-target--card::after {
       content: "";
       position: absolute;
       left: -2%;
       bottom: -1%;
-      width: 46%;
-      height: 37%;
+      width: 66%;
+      height: 88%;
       pointer-events: none;
       border-bottom-left-radius: inherit;
-      animation: card-outline-presence 6400ms var(--ease) infinite;
+      transform-origin: left bottom;
+      animation: card-outline-presence 7200ms var(--ease) infinite;
     }
     .motion-target--card::before {
-      opacity: .5;
+      opacity: .74;
       background:
-        radial-gradient(ellipse at 0 100%, rgba(233, 0, 111, .24) 0 8%, rgba(184, 23, 88, .13) 22%, transparent 62%),
-        linear-gradient(90deg, rgba(209, 31, 103, .23), rgba(184, 23, 88, .08) 34%, transparent 74%) left bottom / 18px 100% no-repeat,
-        linear-gradient(0deg, rgba(209, 31, 103, .2), rgba(184, 23, 88, .07) 38%, transparent 76%) left bottom / 100% 16px no-repeat;
-      filter: blur(5px);
+        radial-gradient(ellipse at 0 100%, rgba(233, 0, 111, .38) 0 8%, rgba(184, 23, 88, .19) 26%, transparent 66%),
+        linear-gradient(90deg, rgba(223, 42, 119, .4), rgba(184, 23, 88, .12) 36%, transparent 78%) left bottom / 22px 100% no-repeat,
+        linear-gradient(0deg, rgba(223, 42, 119, .34), rgba(184, 23, 88, .1) 40%, transparent 80%) left bottom / 100% 19px no-repeat;
+      filter: blur(6px);
       mix-blend-mode: screen;
     }
     .motion-target--card::after {
-      opacity: .48;
-      border-left: 1px solid rgba(218, 63, 125, .48);
-      border-bottom: 1px solid rgba(218, 63, 125, .48);
+      opacity: .76;
+      border-left: 1.5px solid rgba(239, 110, 166, .8);
+      border-bottom: 1.5px solid rgba(239, 110, 166, .8);
       box-shadow:
-        -2px 0 7px rgba(184, 23, 88, .2),
-        0 3px 10px rgba(184, 23, 88, .16),
-        inset 2px -2px 7px rgba(233, 0, 111, .08);
+        -2px 0 8px rgba(233, 0, 111, .42),
+        0 3px 12px rgba(233, 0, 111, .32),
+        inset 2px -2px 8px rgba(233, 0, 111, .14);
+    }
+    .card-select-label {
+      position: absolute;
+      left: 0;
+      bottom: -3.25em;
+      display: flex;
+      align-items: center;
+      gap: .65em;
+      color: rgba(241, 232, 225, .94);
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: clamp(10px, 1vw, 13px);
+      font-weight: 700;
+      letter-spacing: .14em;
+      line-height: 1;
+      white-space: nowrap;
+      text-shadow: 0 0 8px rgba(233, 0, 111, .32);
+      pointer-events: none;
+      animation: card-label-presence 7200ms var(--ease) infinite;
+    }
+    .card-select-label::before {
+      width: 1.4em;
+      height: 1px;
+      content: "";
+      background: rgba(236, 74, 142, .9);
+      box-shadow: 0 0 8px rgba(233, 0, 111, .7);
+    }
     }
     .motion-target--driver {
       top: 18%;
@@ -183,8 +209,14 @@
       animation-delay: 150ms;
     }
     @keyframes card-outline-presence {
-      0%, 100% { opacity: .42; }
-      50% { opacity: .7; }
+      0%, 100% { opacity: .5; transform: scale(.94); }
+      42% { opacity: 1; transform: scale(1); }
+      56% { opacity: .92; transform: scale(.992); }
+    }
+    @keyframes card-label-presence {
+      0%, 100% { opacity: .5; transform: translateX(-2px); }
+      42% { opacity: 1; transform: translateX(0); }
+      56% { opacity: .9; transform: translateX(0); }
     }
     @keyframes rail-presence {
       0%, 100% { opacity: .45; transform: scale(.96); }
@@ -526,6 +558,7 @@
       .sequence { width: calc(100% - 32px); bottom: 28px; font-size: 8px; }
       .activate { bottom: 94px; }
       .mobile-controls { display: flex; }
+      .card-select-label { bottom: -3.5em; font-size: 10px; }
       .outro { padding: 17vh 24px 10vh; }
     }
 
@@ -551,7 +584,9 @@
         </div>
       </div>
       <div class="motion-hitbox" aria-label="Interactive transformation controls">
-        <button class="motion-target motion-target--card" id="cardTarget" type="button" aria-label="Select the transformation card" hidden></button>
+        <button class="motion-target motion-target--card" id="cardTarget" type="button" aria-label="Select the transformation card" hidden>
+          <span class="card-select-label" aria-hidden="true">CLICK CARD</span>
+        </button>
         <button class="motion-target motion-target--driver" id="driverTarget" type="button" aria-label="Push the transformation driver" hidden></button>
       </div>
       <div class="blackout" aria-hidden="true"></div>
